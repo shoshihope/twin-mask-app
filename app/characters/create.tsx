@@ -1,6 +1,16 @@
 import { useRouter } from "expo-router";
-import { useMemo, useState } from "react";
-import { Alert, Button, Pressable, Text, TextInput, View } from "react-native";
+import { useEffect, useMemo, useState } from "react";
+import {
+    Alert,
+    Button,
+    KeyboardAvoidingView,
+    Platform,
+    Pressable,
+    ScrollView,
+    Text,
+    TextInput,
+    View,
+} from "react-native";
 import {
     BACKGROUND_FEATURES,
     BLOODLINES,
@@ -14,7 +24,6 @@ function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-// Small reusable list chips (toggleable)
 function ToggleChip({
   label,
   selected,
@@ -42,7 +51,6 @@ function ToggleChip({
   );
 }
 
-// Simple section wrapper
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <View style={{ marginTop: 16 }}>
@@ -59,32 +67,22 @@ export default function CreateCharacter() {
   const [bloodline, setBloodline] = useState<(typeof BLOODLINES)[number] | "">("");
   const [culture, setCulture] = useState<(typeof CULTURES)[number] | "">("");
 
-  // Multi-select states store KEYS (ids)
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [selectedFlaws, setSelectedFlaws] = useState<string[]>([]);
 
-  // ---- Bloodline-aware skills ----
-  // If a skill lists allowedBloodlines, show only when current bloodline is in that list.
-  // Otherwise (no restriction) it's always shown.
+  // Filter visible skills by bloodline; unrestricted skills are always visible.
   const visibleSkills = useMemo(() => {
-    const entries = Object.entries(SKILL_CATALOG); // [key, {label, allowedBloodlines?}]
+    const entries = Object.entries(SKILL_CATALOG) as [string, { label: string; allowedBloodlines?: readonly (typeof BLOODLINES[number])[] }][];
     if (!bloodline) return entries;
-    return entries.filter(([_, v]) =>
-      !v.allowedBloodlines || v.allowedBloodlines.includes(bloodline)
-    );
+    return entries.filter(([_, v]) => !v.allowedBloodlines || v.allowedBloodlines.includes(bloodline));
   }, [bloodline]);
 
-  // Clean up selected skills if user changes bloodline and some picks are no longer allowed
-  const prunedSelectedSkills = useMemo(() => {
-    const visibleKeys = new Set(visibleSkills.map(([k]) => k));
-    return selectedSkills.filter((k) => visibleKeys.has(k));
-  }, [selectedSkills, visibleSkills]);
-
-  // (Keep UI state in sync)
-  if (prunedSelectedSkills.length !== selectedSkills.length) {
-    setSelectedSkills(prunedSelectedSkills);
-  }
+  // PRUNE invalid selected skills when bloodline changes (avoid setState during render)
+  useEffect(() => {
+    const allowed = new Set(visibleSkills.map(([k]) => k));
+    setSelectedSkills((prev) => prev.filter((k) => allowed.has(k)));
+  }, [visibleSkills]);
 
   const onSave = async () => {
     if (!name.trim()) {
@@ -95,9 +93,6 @@ export default function CreateCharacter() {
       Alert.alert("Please pick a valid bloodline");
       return;
     }
-    // Culture is optional; make it required if you want:
-    // if (!culture) { Alert.alert("Pick a culture"); return; }
-
     const now = new Date().toISOString();
     await saveCharacter({
       id: uid(),
@@ -113,113 +108,122 @@ export default function CreateCharacter() {
     router.replace("/characters");
   };
 
-  // Helper to render a flexible grid of chips from a record
   const renderChipGrid = (
     items: Record<string, { label: string }>,
     selected: string[],
     setSelected: (next: string[]) => void
-  ) => {
-    const data = Object.entries(items); // [key,{label}]
-    return (
-      <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-        {data.map(([key, { label }]) => {
-          const isSelected = selected.includes(key);
-          return (
-            <ToggleChip
-              key={key}
-              label={label}
-              selected={isSelected}
-              onPress={() =>
-                setSelected(isSelected ? selected.filter((k) => k !== key) : [...selected, key])
-              }
-            />
-          );
-        })}
-      </View>
-    );
-  };
+  ) => (
+    <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+      {Object.entries(items).map(([key, { label }]) => {
+        const isSelected = selected.includes(key);
+        return (
+          <ToggleChip
+            key={key}
+            label={label}
+            selected={isSelected}
+            onPress={() =>
+              setSelected(isSelected ? selected.filter((k) => k !== key) : [...selected, key])
+            }
+          />
+        );
+      })}
+    </View>
+  );
 
   return (
-    <View style={{ flex: 1, padding: 16 }}>
-      <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 8 }}>New Character</Text>
+    <KeyboardAvoidingView
+      style={{ flex: 1 }}
+      behavior={Platform.select({ ios: "padding", android: undefined })}
+      keyboardVerticalOffset={Platform.select({ ios: 80, android: 0 })} // adjust if header overlaps
+    >
+      <ScrollView
+        style={{ flex: 1 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 48 }} // paddingBottom ensures last inputs aren't hidden
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 8 }}>New Character</Text>
 
-      {/* Name */}
-      <Section title="Name">
-        <TextInput
-          value={name}
-          onChangeText={setName}
-          placeholder="Enter name"
-          style={{ borderWidth: 1, borderRadius: 8, padding: 10 }}
-        />
-      </Section>
+        {/* Name */}
+        <Section title="Name">
+          <TextInput
+            value={name}
+            onChangeText={setName}
+            placeholder="Enter name"
+            style={{ borderWidth: 1, borderRadius: 8, padding: 10 }}
+            returnKeyType="done"
+          />
+        </Section>
 
-      {/* Bloodline (single-select list using chips) */}
-      <Section title="Bloodline">
-        <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-          {BLOODLINES.map((b) => (
-            <ToggleChip
-              key={b}
-              label={b}
-              selected={bloodline === b}
-              onPress={() => setBloodline(b)}
-            />
-          ))}
-        </View>
-      </Section>
+        {/* Bloodline */}
+        <Section title="Bloodline">
+          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+            {BLOODLINES.map((b) => (
+              <ToggleChip
+                key={b}
+                label={b}
+                selected={bloodline === b}
+                onPress={() => setBloodline(b)}
+              />
+            ))}
+          </View>
+        </Section>
 
-      {/* Culture (single-select) */}
-      <Section title="Culture">
-        <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-          {CULTURES.map((c) => (
-            <ToggleChip
-              key={c}
-              label={c}
-              selected={culture === c}
-              onPress={() => setCulture(c)}
-            />
-          ))}
-        </View>
-      </Section>
+        {/* Culture */}
+        <Section title="Culture">
+          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+            {CULTURES.map((c) => (
+              <ToggleChip
+                key={c}
+                label={c}
+                selected={culture === c}
+                onPress={() => setCulture(c)}
+              />
+            ))}
+          </View>
+        </Section>
 
-      {/* Background Features (multi-select) */}
-      <Section title="Background Features">
-        {renderChipGrid(BACKGROUND_FEATURES, selectedFeatures, setSelectedFeatures)}
-      </Section>
+        {/* Background Features */}
+        <Section title="Background Features">
+          {renderChipGrid(BACKGROUND_FEATURES, selectedFeatures, setSelectedFeatures)}
+        </Section>
 
-      {/* Skills (multi-select, bloodline-aware) */}
-      <Section title="Skills">
-        <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-          {visibleSkills.map(([key, { label }]) => (
-            <ToggleChip
-              key={key}
-              label={label}
-              selected={selectedSkills.includes(key)}
-              onPress={() => {
-                const isSelected = selectedSkills.includes(key);
-                setSelectedSkills(
-                  isSelected
-                    ? selectedSkills.filter((k) => k !== key)
-                    : [...selectedSkills, key]
-                );
-              }}
-            />
-          ))}
-        </View>
-        {!bloodline ? (
-          <Text style={{ marginTop: 6, fontStyle: "italic" }}>
-            Select a bloodline to see bloodline-restricted skills.
-          </Text>
-        ) : null}
-      </Section>
+        {/* Skills (bloodline-aware) */}
+        <Section title="Skills">
+          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
+            {visibleSkills.map(([key, { label }]) => {
+              const isSelected = selectedSkills.includes(key);
+              return (
+                <ToggleChip
+                  key={key}
+                  label={label}
+                  selected={isSelected}
+                  onPress={() =>
+                    setSelectedSkills(
+                      isSelected
+                        ? selectedSkills.filter((k) => k !== key)
+                        : [...selectedSkills, key]
+                    )
+                  }
+                />
+              );
+            })}
+          </View>
+          {!bloodline ? (
+            <Text style={{ marginTop: 6, fontStyle: "italic" }}>
+              Select a bloodline to see bloodline-restricted skills.
+            </Text>
+          ) : null}
+        </Section>
 
-      {/* Flaws (multi-select) */}
-      <Section title="Flaws">
-        {renderChipGrid(FLAWS, selectedFlaws, setSelectedFlaws)}
-      </Section>
+        {/* Flaws */}
+        <Section title="Flaws">
+          {renderChipGrid(FLAWS, selectedFlaws, setSelectedFlaws)}
+        </Section>
 
-      <View style={{ height: 16 }} />
-      <Button title="Save" onPress={onSave} />
-      <View style={{ height: 24 }} />
-    </View>
+        <View style={{ height: 16 }} />
+        <Button title="Save" onPress={onSave} />
+        <View style={{ height: 24 }} />
+      </ScrollView>
+    </KeyboardAvoidingView>
   );
 }
