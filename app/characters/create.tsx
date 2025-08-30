@@ -11,14 +11,14 @@ import {
     TextInput,
     View,
 } from "react-native";
-import {
-    BACKGROUND_FEATURES,
-    BLOODLINES,
-    CULTURES,
-    FLAWS,
-    SKILL_CATALOG,
-} from "../../lib/characters/config";
+import * as Config from "../../lib/characters/config";
 import { saveCharacter } from "../../lib/storage/characters";
+
+// Pull what we need; SKILL_CATEGORIES might not exist in config
+const { BLOODLINES, CULTURES, SKILL_CATALOG, BACKGROUND_FEATURES, FLAWS } = Config;
+const CANONICAL_CATS: string[] | undefined = Array.isArray((Config as any).SKILL_CATEGORIES)
+  ? ((Config as any).SKILL_CATEGORIES as string[])
+  : undefined;
 
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -108,23 +108,71 @@ export default function CreateCharacter() {
 
   const [name, setName] = useState("");
   const [bloodline, setBloodline] = useState<(typeof BLOODLINES)[number] | "">("");
-  const [culture, setCulture] = useState<(typeof CULTURES)[number] | "">("");
+
+  // MULTI-SELECT cultures
+  const [selectedCultures, setSelectedCultures] = useState<string[]>([]);
 
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [selectedFlaws, setSelectedFlaws] = useState<string[]>([]);
 
-  // Filter visible skills by bloodline
+  // Collapsed/expanded state per skill category
+  const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
+
+  // Filter visible skills by bloodline; unrestricted skills are always visible.
   const visibleSkills = useMemo(() => {
     const entries = Object.entries(SKILL_CATALOG) as [
       string,
-      { label: string; cost?: number; allowedBloodlines?: readonly (typeof BLOODLINES[number])[] }
+      {
+        label: string;
+        cost?: number;
+        category?: string;
+        allowedBloodlines?: readonly (typeof BLOODLINES[number])[];
+      }
     ][];
     if (!bloodline) return entries;
     return entries.filter(
       ([_, v]) => !v.allowedBloodlines || v.allowedBloodlines.includes(bloodline)
     );
   }, [bloodline]);
+
+  // Group visible skills by category (respect canonical order if present)
+  const skillGroups = useMemo(() => {
+    const groups = new Map<string, { key: string; label: string; cost?: number }[]>();
+
+    for (const [key, v] of visibleSkills) {
+      const rawCat = v.category?.trim();
+      const cat =
+        rawCat && CANONICAL_CATS?.includes(rawCat) ? rawCat : rawCat || "Uncategorized";
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat)!.push({ key, label: v.label, cost: v.cost });
+    }
+
+    if (Array.isArray(CANONICAL_CATS) && CANONICAL_CATS.length) {
+      const ordered: Array<[string, { key: string; label: string; cost?: number }[]]> = [];
+      for (const cat of CANONICAL_CATS) {
+        if (groups.has(cat)) {
+          ordered.push([cat, groups.get(cat)!]);
+          groups.delete(cat);
+        }
+      }
+      // leftovers (unknowns + maybe "Uncategorized")
+      const leftover = Array.from(groups.entries());
+      leftover.sort(([a], [b]) => {
+        if (a === "Uncategorized") return 1;
+        if (b === "Uncategorized") return -1;
+        return a.localeCompare(b, undefined, { sensitivity: "base" });
+      });
+      return [...ordered, ...leftover];
+    } else {
+      // alphabetical fallback with "Uncategorized" last
+      return Array.from(groups.entries()).sort(([a], [b]) => {
+        if (a === "Uncategorized") return 1;
+        if (b === "Uncategorized") return -1;
+        return a.localeCompare(b, undefined, { sensitivity: "base" });
+      });
+    }
+  }, [visibleSkills]);
 
   // PRUNE invalid selected skills when bloodline changes
   useEffect(() => {
@@ -171,11 +219,30 @@ export default function CreateCharacter() {
 
   const characterPoints = skillsSubtotal + featuresSubtotal + flawsSubtotal;
 
+  // Auto-expand categories that have any selected skills.
+  // We ONLY add categories to the expanded set; we do not auto-collapse.
+  useEffect(() => {
+    const catsWithSelected = new Set<string>();
+    for (const [category, items] of skillGroups) {
+      if (items.some(({ key }) => selectedSkills.includes(key))) {
+        catsWithSelected.add(category);
+      }
+    }
+    if (catsWithSelected.size) {
+      setExpandedCats((prev) => {
+        const next = new Set(prev);
+        catsWithSelected.forEach((c) => next.add(c));
+        return next;
+      });
+    }
+  }, [skillGroups, selectedSkills]);
+
   const onSave = async () => {
     if (!name.trim()) {
       Alert.alert("Please enter a name");
       return;
     }
+    // REQUIRED single-select bloodline (exactly one must be chosen)
     if (!bloodline || !BLOODLINES.includes(bloodline)) {
       Alert.alert("Please pick a valid bloodline");
       return;
@@ -185,13 +252,13 @@ export default function CreateCharacter() {
       id: uid(),
       name: name.trim(),
       bloodline,
-      culture: culture || undefined,
+      cultures: selectedCultures, // multi-select cultures
       backgroundFeatures: selectedFeatures,
       skills: selectedSkills,
       flaws: selectedFlaws,
       createdAt: now,
       updatedAt: now,
-    });
+    } as any); // remove `as any` once Character type includes `cultures?: string[]`
     router.replace("/characters");
   };
 
@@ -219,6 +286,20 @@ export default function CreateCharacter() {
     </View>
   );
 
+  // Toggle a skill category open/closed
+  const toggleCategory = (cat: string) => {
+    setExpandedCats((prev) => {
+      const next = new Set(prev);
+      if (next.has(cat)) next.delete(cat);
+      else next.add(cat);
+      return next;
+    });
+  };
+
+  // Count selected skills in a category (to show in header)
+  const selectedCountInCategory = (items: { key: string }[]) =>
+    items.reduce((acc, it) => acc + (selectedSkills.includes(it.key) ? 1 : 0), 0);
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -243,58 +324,117 @@ export default function CreateCharacter() {
           />
         </Section>
 
-        {/* Bloodline */}
+        {/* Bloodline (required, single-select; cannot unselect by tapping again) */}
         <Section title="Bloodline">
           <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-            {BLOODLINES.map((b) => (
-              <ToggleChip
-                key={b}
-                label={b}
-                selected={bloodline === b}
-                onPress={() => setBloodline(b)}
-              />
-            ))}
+            {BLOODLINES.map((b) => {
+              const isSelected = bloodline === b;
+              return (
+                <Pressable
+                  key={b}
+                  onPress={() => setBloodline(b)} // always set; never clear to ""
+                  style={({ pressed }) => ({
+                    paddingVertical: 8,
+                    paddingHorizontal: 12,
+                    borderRadius: 999,
+                    borderWidth: 1,
+                    margin: 4,
+                    opacity: pressed ? 0.7 : 1,
+                    backgroundColor: isSelected ? "#ddd" : "transparent",
+                  })}
+                >
+                  <Text>{b}</Text>
+                </Pressable>
+              );
+            })}
           </View>
+          {!bloodline ? (
+            <Text style={{ marginTop: 6, color: "red" }}>You must choose a bloodline.</Text>
+          ) : null}
         </Section>
 
-        {/* Culture */}
-        <Section title="Culture">
+        {/* Cultures (multi-select) */}
+        <Section title="Cultures">
           <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-            {CULTURES.map((c) => (
-              <ToggleChip
-                key={c}
-                label={c}
-                selected={culture === c}
-                onPress={() => setCulture(c)}
-              />
-            ))}
+            {CULTURES.map((c) => {
+              const isSelected = selectedCultures.includes(c);
+              return (
+                <ToggleChip
+                  key={c}
+                  label={c}
+                  selected={isSelected}
+                  onPress={() =>
+                    setSelectedCultures(
+                      isSelected
+                        ? selectedCultures.filter((k) => k !== c)
+                        : [...selectedCultures, c]
+                    )
+                  }
+                />
+              );
+            })}
           </View>
         </Section>
 
-        {/* Background Features */}
+        {/* Background Features (two-column rows) */}
         <Section title="Background Features">
           {renderTwoColToggleList(BACKGROUND_FEATURES, selectedFeatures, setSelectedFeatures)}
         </Section>
 
-        {/* Skills */}
+        {/* Skills grouped by (optional) canonical category order - COLLAPSIBLE */}
         <Section title="Skills">
           <View>
-            {visibleSkills.map(([key, { label, cost }]) => {
-              const isSelected = selectedSkills.includes(key);
+            {skillGroups.map(([category, items]) => {
+              const expanded = expandedCats.has(category);
+              const selCount = selectedCountInCategory(items);
               return (
-                <TwoColRow
-                  key={key}
-                  label={label}
-                  cost={cost}
-                  selected={isSelected}
-                  onToggle={() =>
-                    setSelectedSkills(
-                      isSelected
-                        ? selectedSkills.filter((k) => k !== key)
-                        : [...selectedSkills, key]
-                    )
-                  }
-                />
+                <View key={category} style={{ marginBottom: 8 }}>
+                  <Pressable
+                    onPress={() => toggleCategory(category)}
+                    accessibilityRole="button"
+                    style={({ pressed }) => ({
+                      flexDirection: "row",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      paddingVertical: 10,
+                      paddingHorizontal: 12,
+                      borderWidth: 1,
+                      borderRadius: 8,
+                      backgroundColor: "#f7f7f7",
+                      opacity: pressed ? 0.7 : 1,
+                    })}
+                  >
+                    <Text style={{ fontWeight: "600" }}>
+                      {expanded ? "▼" : "▶"} {category}
+                    </Text>
+                    <Text style={{ fontSize: 12 }}>
+                      {selCount}/{items.length} selected
+                    </Text>
+                  </Pressable>
+
+                  {expanded ? (
+                    <View style={{ marginTop: 6 }}>
+                      {items.map(({ key, label, cost }) => {
+                        const isSelected = selectedSkills.includes(key);
+                        return (
+                          <TwoColRow
+                            key={key}
+                            label={label}
+                            cost={cost}
+                            selected={isSelected}
+                            onToggle={() =>
+                              setSelectedSkills(
+                                isSelected
+                                  ? selectedSkills.filter((k) => k !== key)
+                                  : [...selectedSkills, key]
+                              )
+                            }
+                          />
+                        );
+                      })}
+                    </View>
+                  ) : null}
+                </View>
               );
             })}
           </View>
@@ -305,7 +445,7 @@ export default function CreateCharacter() {
           ) : null}
         </Section>
 
-        {/* Flaws */}
+        {/* Flaws (two-column rows) */}
         <Section title="Flaws">
           {renderTwoColToggleList(FLAWS, selectedFlaws, setSelectedFlaws)}
         </Section>
