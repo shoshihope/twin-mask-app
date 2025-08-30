@@ -7,6 +7,8 @@ export const BLOODLINES = [
   "Human", "Effendal", "Celestial-blooded", "Demon-blooded", "Dragon-blooded", "Fae-blooded", "Newborn Dream"
 ] as const;
 
+export type Bloodline = typeof BLOODLINES[number];
+
 // All possible cultures
 export const CULTURES = [
   "Castle Thorn",
@@ -305,22 +307,65 @@ export type SkillKey =
   | "fletching"
   | "engineering"
   | "reconstruct"
-  | "inventor";
+  | "inventor"
+    //Bloodline restricted skills
+        // restricted human skills
+  | "unburdened"
+  | "good_enough"
+  | "pillar_of_the_community"
+  | "force_of_will"
+  | "pursuit_of_knowledge"
+        // restricted effendal skills
+  | "effendal_senses"
+  | "effendal_agility"
+  | "patience"
+  | "weapon_master"
+  | "scion_of_the_land"
+        // fae skills
+  | "slipery"
+  | "magic_resistant"
+  | "charmed_misstep"
+  | "glamour"
+  | "dominating_gesture"
+        // celestial skills
+  | "rallying_cry"
+  | "healing_touch"
+  | "resurrection"
+  | "rise_towards_the_light"
+        // demon skills
+  | "draining_touch"
+  | "abhorrent_sign"
+  | "captivating_gaze"
+  | "sink_into_darkness"
+        // dragon skills
+  | "natural_armor"
+  | "iron_stomach"
+  | "draconic_roar"
+  | "bones_of_the_earth"
+        //supernatural strength
+  | "supernatural_strength"
+        //newborn dream skills
+  | "grasp_of_the_waking"
+  | "methond_in_madness"
+  | "drawn_to_the_muse"
+  | "infinite_possibility"
+  | "slumber_sight";
 
 type PrereqCount = { key: SkillKey; count: number };
 
 type PrereqAnyCount = { key: SkillKey; count: number };
 
 type SkillConfig = {
-  label: string;
-  cost: number;
-  category: string;
-  maxStacks?: number;
+  label: string;            // What the user will see the skill called
+  cost: number;             // CP cost
+  category: string;         // type of skill
+  maxStacks?: number;       // number of times the user can add this skill
   prereqAll?: SkillKey[];   // AND (at least 1 each)
   prereqAny?: SkillKey[];   // OR  (at least 1 of these)
   prereqCounts?: PrereqCount[]; // requires N stacks of a skill
-  prereqBackgroundAll?: BackgroundFeatureKey[];
-  prereqAnyCounts?: PrereqAnyCount[];
+  prereqBackgroundAll?: BackgroundFeatureKey[]; // if a background feature is a prereq
+  prereqAnyCounts?: PrereqAnyCount[];   // this checks how many times a user has taken a skill
+  allowedBloodlines?: Bloodline[];      // to indicate bloodline restricted skills
 };
 
 // Crafting skills set (treat these as normal skills in your union & catalog)
@@ -667,19 +712,75 @@ export const SKILL_CATALOG: Record<SkillKey, SkillConfig>= {
     "blacksmithing", "weaponsmithing", "armorsmithing", "shieldsmithing", "locksmithing", "enchanting", "scroll_scribing", "artificing",
     "cooking", "stable_alchemy", "tailoring", "fletching", "engineering"
     ]},
- inventor: {label: "Inventor", cost: 2, category: "Crafting - Other"},
+ inventor: {
+        label: "Inventor",
+        cost: 6,                      // set per your sheet
+        category: "Crafting",
+        prereqAll: ["research"],      // must have Research
+        // Must have ANY ONE crafting skill taken at least 4 times
+        prereqAnyCounts: CRAFTING_KEYS.map(k => ({ key: k as SkillKey, count: 4 })),
+        },
+    // restricted bloodline skills
+        // human skills
+ unburdened:                {label: "Unburdened",               cost: 3, category: "Restricted Bloodline Skills", allowedBloodlines: ["Human"]},
+ good_enough:               {label: "Good Enough",              cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Human"]},
+ pillar_of_the_community:   {label: "Pillar of the Community",  cost: 2, category: "Restricted Bloodline Skills", allowedBloodlines: ["Human"]},
+ force_of_will:             {label: "Force of Will",            cost: 4, category: "Restricted Bloodline Skills", 
+                                maxStacks: Infinity, allowedBloodlines: ["Human"]},
+ pursuit_of_knowledge:      {label: "Pursuit of Knowledge",      cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Human"]},
+        //effendal skills
+ effendal_senses:   {label: "Effendal Senses",      cost: 2, category: "Restricted Bloodline Skills", allowedBloodlines: ["Effendal"]},
+ effendal_agility:  {label: "Effendal Agility",     cost: 5, category: "Restricted Bloodline Skills", allowedBloodlines: ["Effendal"]},
+ patience:          {label: "Patience",             cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Effendal"]},
+ weapon_master:     {label: "Weapon Master",        cost: 6, category: "Restricted Bloodline Skills", allowedBloodlines: ["Effendal"]},
+ scion_of_the_land: {label: "Effendal Senses",      cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Effendal"]},
+        // fae blooded skills
+ slipery:           {label: "Slippery",         cost: 7, category: "Retricted Bloodline Skills", allowedBloodlines: ["Fae-blooded"]},
+ magic_resistant:   {label: "Magic Resistant",  cost: 5, category: "Restricted Bloodline Skills", allowedBloodlines: ["Fae-blooded"], maxStacks: Infinity},
+ charmed_misstep:   {label: "Charmed Misstep",  cost: 3, category: "Restricted Bloodline Skills", allowedBloodlines: ["Fae-blooded"], maxStacks: Infinity},
+ glamour:           {label: "Glamour",          cost: 7, category: "Restricted Bloodline Skills", allowedBloodlines: ["Fae-blooded"]},
+ dominating_gesture:{label: "Dominating Gesture", cost: 8, category: "Restricted Bloodline Skills", allowedBloodlines: ["Fae-blooded"], maxStacks: Infinity},
+        // celestial blooded skills
+ rallying_cry:              {label: "Rallying Cry",         cost: 3, category: "Restricted Bloodline Skills", 
+                                allowedBloodlines: ["Celestial-blooded"], maxStacks: Infinity},
+ healing_touch:             {label: "Healing Touch",        cost: 6, category: "Restricted Bloodline Skills", 
+                                allowedBloodlines: ["Celestial-blooded"], maxStacks: Infinity},
+ resurrection:              {label: "Resurrection",         cost: 10, category: "Restricted Bloodline Skills", 
+                                allowedBloodlines: ["Celestial-blooded"], maxStacks: Infinity},
+ rise_towards_the_light:    {label: "Rise Toward the Light",cost: 5, category: "Restricted Bloodline Skills", 
+                                allowedBloodlines: ["Celestial-blooded"]},
+        // demon blooded skills
+ draining_touch:    {label: "Draining Touch",   cost: 5, category: "Restricted Bloodline Skills", allowedBloodlines: ["Demon-blooded"]},
+ abhorrent_sign:    {label: "Abhorrent Sign",   cost: 3, category: "Restricted Bloodline Skills", allowedBloodlines: ["Demon-blooded"], maxStacks: Infinity},
+ captivating_gaze:  {label: "Captivating Gaze", cost: 8, category: "Restricted Bloodline Skills", allowedBloodlines: ["Demon-blooded"], maxStacks: Infinity},
+ sink_into_darkness:{label: "Sink into Darkness", cost: 5, category: "Restricted Bloodline Skills", allowedBloodlines: ["Demon-blooded"]},
+        //dragon skills
+ natural_armor:     {label: "Natural Armor",    cost: 7, category: "Restricted Bloodline Skills", allowedBloodlines: ["Dragon-blooded"]},
+ iron_stomach:      {label: "Iron Stomach",     cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Dragon-blooded"]},
+ draconic_roar:     {label: "Draconic Roar",    cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Dragon-blooded"], maxStacks: Infinity},
+ bones_of_the_earth:{label: "Bones of the Earth", cost: 8, category: "Restricted Bloodline Skills", allowedBloodlines: ["Dragon-blooded"], maxStacks: Infinity},
+        //supernatural strength
+ supernatural_strength: {label: "Supernatural Strength", cost: 10, category: "Restricted Bloodline Skills", 
+                            allowedBloodlines: ["Celestial-blooded", "Dragon-blooded", "Demon-blooded"]},
+        // newborn dream skills
+ grasp_of_the_waking:   {label: "Grasp of the Waking",  cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Newborn Dream"]},
+ methond_in_madness:    {label: "Method in Madness",    cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Newborn Dream"]},
+ drawn_to_the_muse:     {label: "Drawn to the Muse",    cost: 3, category: "Restricted Bloodline Skills", allowedBloodlines: ["Newborn Dream"]},
+ infinite_possibility:  {label: "Infinite Possibility", cost: 4, category: "Restricted Bloodline Skills", allowedBloodlines: ["Newborn Dream"]},
+ slumber_sight:         {label: "Slumber Sight",        cost: 8, category: "Restricted Bloodline Skills", 
+                            allowedBloodlines: ["Newborn Dream"], maxStacks: Infinity},
 };
 
 
 // ---- Blooded Skills (by bloodline, each has a fixed cost) ----
-export type BloodedSkillKey =
-  | "iron_stomach"
-  | "draconic_roar"; // add more…
+// export type BloodedSkillKey =
+//   | "iron_stomach"
+//   | "draconic_roar"; // add more…
 
 //export const BLOODED_SKILL_CATALOG: Record<BloodedSkillKey, { label: string; cost: number }> = {
   //iron_stomach:  { label: "Iron Stomach",  cost: 2 },
   //draconic_roar: { label: "Draconic Roar", cost: 3 },
-  // …
+  //
 //};
 
 // If some bloodlines unlock multiple blooded skills, list them all here:
