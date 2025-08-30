@@ -24,6 +24,11 @@ function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+// --- Generic type guard: proves "key" exists on "obj" ---
+function hasKey<T extends object>(obj: T, key: PropertyKey): key is keyof T {
+  return key in obj;
+}
+
 function ToggleChip({
   label,
   selected,
@@ -73,9 +78,18 @@ export default function CreateCharacter() {
 
   // Filter visible skills by bloodline; unrestricted skills are always visible.
   const visibleSkills = useMemo(() => {
-    const entries = Object.entries(SKILL_CATALOG) as [string, { label: string; allowedBloodlines?: readonly (typeof BLOODLINES[number])[] }][];
+    const entries = Object.entries(SKILL_CATALOG) as [
+      string,
+      {
+        label: string;
+        cost?: number;
+        allowedBloodlines?: readonly (typeof BLOODLINES[number])[];
+      }
+    ][];
     if (!bloodline) return entries;
-    return entries.filter(([_, v]) => !v.allowedBloodlines || v.allowedBloodlines.includes(bloodline));
+    return entries.filter(
+      ([_, v]) => !v.allowedBloodlines || v.allowedBloodlines.includes(bloodline)
+    );
   }, [bloodline]);
 
   // PRUNE invalid selected skills when bloodline changes (avoid setState during render)
@@ -83,6 +97,19 @@ export default function CreateCharacter() {
     const allowed = new Set(visibleSkills.map(([k]) => k));
     setSelectedSkills((prev) => prev.filter((k) => allowed.has(k)));
   }, [visibleSkills]);
+
+  // --- Running total (safe indexing via type guard) ---
+  const totalCost = useMemo(() => {
+    let sum = 0;
+    for (const key of selectedSkills) {
+      const cost =
+        hasKey(SKILL_CATALOG, key) && typeof SKILL_CATALOG[key].cost === "number"
+          ? (SKILL_CATALOG[key].cost as number)
+          : 0;
+      sum += cost;
+    }
+    return sum;
+  }, [selectedSkills]);
 
   const onSave = async () => {
     if (!name.trim()) {
@@ -130,15 +157,54 @@ export default function CreateCharacter() {
     </View>
   );
 
+  // --- Skill Row (two columns: label | cost) ---
+  const SkillRow = ({
+    label,
+    cost,
+    selected,
+    onToggle,
+  }: {
+    label: string;
+    cost?: number;
+    selected: boolean;
+    onToggle: () => void;
+  }) => {
+    const costDisplay = Number.isFinite(cost) ? cost : 0;
+    return (
+      <Pressable
+        onPress={onToggle}
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          borderWidth: 1,
+          borderRadius: 8,
+          paddingVertical: 10,
+          paddingHorizontal: 12,
+          marginVertical: 6,
+          opacity: pressed ? 0.7 : 1,
+          backgroundColor: selected ? "#e5e7eb" : "transparent",
+        })}
+      >
+        {/* Left column: skill name */}
+        <Text style={{ flex: 1, fontSize: 15 }}>{label}</Text>
+
+        {/* Right column: cost */}
+        <Text style={{ width: 64, textAlign: "right", fontVariant: ["tabular-nums"] }}>
+          {costDisplay}
+        </Text>
+      </Pressable>
+    );
+  };
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
       behavior={Platform.select({ ios: "padding", android: undefined })}
-      keyboardVerticalOffset={Platform.select({ ios: 80, android: 0 })} // adjust if header overlaps
+      keyboardVerticalOffset={Platform.select({ ios: 80, android: 0 })}
     >
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 16, paddingBottom: 48 }} // paddingBottom ensures last inputs aren't hidden
+        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 8 }}>New Character</Text>
@@ -187,17 +253,18 @@ export default function CreateCharacter() {
           {renderChipGrid(BACKGROUND_FEATURES, selectedFeatures, setSelectedFeatures)}
         </Section>
 
-        {/* Skills (bloodline-aware) */}
+        {/* Skills (two-column rows: name | cost) */}
         <Section title="Skills">
-          <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-            {visibleSkills.map(([key, { label }]) => {
+          <View>
+            {visibleSkills.map(([key, { label, cost }]) => {
               const isSelected = selectedSkills.includes(key);
               return (
-                <ToggleChip
+                <SkillRow
                   key={key}
                   label={label}
+                  cost={cost}
                   selected={isSelected}
-                  onPress={() =>
+                  onToggle={() =>
                     setSelectedSkills(
                       isSelected
                         ? selectedSkills.filter((k) => k !== key)
@@ -219,11 +286,27 @@ export default function CreateCharacter() {
         <Section title="Flaws">
           {renderChipGrid(FLAWS, selectedFlaws, setSelectedFlaws)}
         </Section>
-
-        <View style={{ height: 16 }} />
-        <Button title="Save" onPress={onSave} />
-        <View style={{ height: 24 }} />
       </ScrollView>
+
+      {/* Sticky footer with running total (and Save button for convenience) */}
+      <View
+        style={{
+          position: "absolute",
+          left: 0,
+          right: 0,
+          bottom: 0,
+          paddingHorizontal: 16,
+          paddingVertical: 12,
+          borderTopWidth: 1,
+          backgroundColor: "white",
+          gap: 8,
+          flexDirection: "row",
+          alignItems: "center",
+        }}
+      >
+        <Text style={{ flex: 1, fontWeight: "700" }}>Total Cost: {totalCost}</Text>
+        <Button title="Save" onPress={onSave} />
+      </View>
     </KeyboardAvoidingView>
   );
 }
