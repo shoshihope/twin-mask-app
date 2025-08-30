@@ -65,6 +65,44 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
+// --- Reusable two-column row (label | cost) ---
+function TwoColRow({
+  label,
+  cost,
+  selected,
+  onToggle,
+}: {
+  label: string;
+  cost?: number;
+  selected: boolean;
+  onToggle: () => void;
+}) {
+  const costDisplay = Number.isFinite(cost) ? cost : 0;
+  return (
+    <Pressable
+      onPress={onToggle}
+      style={({ pressed }) => ({
+        flexDirection: "row",
+        alignItems: "center",
+        borderWidth: 1,
+        borderRadius: 8,
+        paddingVertical: 10,
+        paddingHorizontal: 12,
+        marginVertical: 6,
+        opacity: pressed ? 0.7 : 1,
+        backgroundColor: selected ? "#e5e7eb" : "transparent",
+      })}
+    >
+      {/* Left column: name */}
+      <Text style={{ flex: 1, fontSize: 15 }}>{label}</Text>
+      {/* Right column: cost */}
+      <Text style={{ width: 64, textAlign: "right", fontVariant: ["tabular-nums"] }}>
+        {costDisplay}
+      </Text>
+    </Pressable>
+  );
+}
+
 export default function CreateCharacter() {
   const router = useRouter();
 
@@ -76,15 +114,11 @@ export default function CreateCharacter() {
   const [selectedSkills, setSelectedSkills] = useState<string[]>([]);
   const [selectedFlaws, setSelectedFlaws] = useState<string[]>([]);
 
-  // Filter visible skills by bloodline; unrestricted skills are always visible.
+  // Filter visible skills by bloodline
   const visibleSkills = useMemo(() => {
     const entries = Object.entries(SKILL_CATALOG) as [
       string,
-      {
-        label: string;
-        cost?: number;
-        allowedBloodlines?: readonly (typeof BLOODLINES[number])[];
-      }
+      { label: string; cost?: number; allowedBloodlines?: readonly (typeof BLOODLINES[number])[] }
     ][];
     if (!bloodline) return entries;
     return entries.filter(
@@ -92,14 +126,14 @@ export default function CreateCharacter() {
     );
   }, [bloodline]);
 
-  // PRUNE invalid selected skills when bloodline changes (avoid setState during render)
+  // PRUNE invalid selected skills when bloodline changes
   useEffect(() => {
     const allowed = new Set(visibleSkills.map(([k]) => k));
     setSelectedSkills((prev) => prev.filter((k) => allowed.has(k)));
   }, [visibleSkills]);
 
-  // --- Running total (safe indexing via type guard) ---
-  const totalCost = useMemo(() => {
+  // --- Subtotals (safe indexing via type guards) ---
+  const skillsSubtotal = useMemo(() => {
     let sum = 0;
     for (const key of selectedSkills) {
       const cost =
@@ -110,6 +144,32 @@ export default function CreateCharacter() {
     }
     return sum;
   }, [selectedSkills]);
+
+  const featuresSubtotal = useMemo(() => {
+    let sum = 0;
+    for (const key of selectedFeatures) {
+      const cost =
+        hasKey(BACKGROUND_FEATURES, key) && typeof BACKGROUND_FEATURES[key].cost === "number"
+          ? (BACKGROUND_FEATURES[key].cost as number)
+          : 0;
+      sum += cost;
+    }
+    return sum;
+  }, [selectedFeatures]);
+
+  const flawsSubtotal = useMemo(() => {
+    let sum = 0;
+    for (const key of selectedFlaws) {
+      const cost =
+        hasKey(FLAWS, key) && typeof FLAWS[key].cost === "number"
+          ? (FLAWS[key].cost as number)
+          : 0;
+      sum += cost;
+    }
+    return sum;
+  }, [selectedFlaws]);
+
+  const characterPoints = skillsSubtotal + featuresSubtotal + flawsSubtotal;
 
   const onSave = async () => {
     if (!name.trim()) {
@@ -135,20 +195,22 @@ export default function CreateCharacter() {
     router.replace("/characters");
   };
 
-  const renderChipGrid = (
-    items: Record<string, { label: string }>,
+  // Helper to render a toggle list (two-column rows)
+  const renderTwoColToggleList = (
+    catalog: Record<string, { label: string; cost?: number }>,
     selected: string[],
     setSelected: (next: string[]) => void
   ) => (
-    <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
-      {Object.entries(items).map(([key, { label }]) => {
+    <View>
+      {Object.entries(catalog).map(([key, { label, cost }]) => {
         const isSelected = selected.includes(key);
         return (
-          <ToggleChip
+          <TwoColRow
             key={key}
             label={label}
+            cost={cost}
             selected={isSelected}
-            onPress={() =>
+            onToggle={() =>
               setSelected(isSelected ? selected.filter((k) => k !== key) : [...selected, key])
             }
           />
@@ -156,45 +218,6 @@ export default function CreateCharacter() {
       })}
     </View>
   );
-
-  // --- Skill Row (two columns: label | cost) ---
-  const SkillRow = ({
-    label,
-    cost,
-    selected,
-    onToggle,
-  }: {
-    label: string;
-    cost?: number;
-    selected: boolean;
-    onToggle: () => void;
-  }) => {
-    const costDisplay = Number.isFinite(cost) ? cost : 0;
-    return (
-      <Pressable
-        onPress={onToggle}
-        style={({ pressed }) => ({
-          flexDirection: "row",
-          alignItems: "center",
-          borderWidth: 1,
-          borderRadius: 8,
-          paddingVertical: 10,
-          paddingHorizontal: 12,
-          marginVertical: 6,
-          opacity: pressed ? 0.7 : 1,
-          backgroundColor: selected ? "#e5e7eb" : "transparent",
-        })}
-      >
-        {/* Left column: skill name */}
-        <Text style={{ flex: 1, fontSize: 15 }}>{label}</Text>
-
-        {/* Right column: cost */}
-        <Text style={{ width: 64, textAlign: "right", fontVariant: ["tabular-nums"] }}>
-          {costDisplay}
-        </Text>
-      </Pressable>
-    );
-  };
 
   return (
     <KeyboardAvoidingView
@@ -204,7 +227,7 @@ export default function CreateCharacter() {
     >
       <ScrollView
         style={{ flex: 1 }}
-        contentContainerStyle={{ padding: 16, paddingBottom: 120 }}
+        contentContainerStyle={{ padding: 16, paddingBottom: 140 }}
         keyboardShouldPersistTaps="handled"
       >
         <Text style={{ fontSize: 18, fontWeight: "700", marginBottom: 8 }}>New Character</Text>
@@ -250,16 +273,16 @@ export default function CreateCharacter() {
 
         {/* Background Features */}
         <Section title="Background Features">
-          {renderChipGrid(BACKGROUND_FEATURES, selectedFeatures, setSelectedFeatures)}
+          {renderTwoColToggleList(BACKGROUND_FEATURES, selectedFeatures, setSelectedFeatures)}
         </Section>
 
-        {/* Skills (two-column rows: name | cost) */}
+        {/* Skills */}
         <Section title="Skills">
           <View>
             {visibleSkills.map(([key, { label, cost }]) => {
               const isSelected = selectedSkills.includes(key);
               return (
-                <SkillRow
+                <TwoColRow
                   key={key}
                   label={label}
                   cost={cost}
@@ -284,11 +307,11 @@ export default function CreateCharacter() {
 
         {/* Flaws */}
         <Section title="Flaws">
-          {renderChipGrid(FLAWS, selectedFlaws, setSelectedFlaws)}
+          {renderTwoColToggleList(FLAWS, selectedFlaws, setSelectedFlaws)}
         </Section>
       </ScrollView>
 
-      {/* Sticky footer with running total (and Save button for convenience) */}
+      {/* Sticky footer: Character Points + Save */}
       <View
         style={{
           position: "absolute",
@@ -296,15 +319,17 @@ export default function CreateCharacter() {
           right: 0,
           bottom: 0,
           paddingHorizontal: 16,
-          paddingVertical: 12,
+          paddingVertical: 10,
           borderTopWidth: 1,
           backgroundColor: "white",
-          gap: 8,
           flexDirection: "row",
           alignItems: "center",
+          justifyContent: "space-between",
         }}
       >
-        <Text style={{ flex: 1, fontWeight: "700" }}>Total Cost: {totalCost}</Text>
+        <Text style={{ fontWeight: "700", fontSize: 16 }}>
+          Character Points: {characterPoints}
+        </Text>
         <Button title="Save" onPress={onSave} />
       </View>
     </KeyboardAvoidingView>
