@@ -22,32 +22,94 @@ const CANONICAL_CATS: string[] | undefined = Array.isArray((Config as any).SKILL
 const BLOODLINE_NEWBORN = "Newborn Dream";
 const TETHERED_KEY = "Tethered";
 
+// Magical tracks we want to group together
+const MAGIC_TRACKS_ORDER = [
+  "alchemy",
+  "blood",
+  "channeling",
+  "divination",
+  "dream",
+  "necromancy",
+  "sorcery",
+  "summoning",
+  "warding",
+] as const;
+type MagicTrack = (typeof MAGIC_TRACKS_ORDER)[number];
+
+// Force these skills into "Other Magical Arts"
+const MAGIC_FORCE_OTHER = new Set<string>(["arcane_tutelage", "spellwright", "elemental_flourish"]);
+
 function uid() {
   return Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 function hasKey<T extends object>(obj: T, key: PropertyKey): key is keyof T {
   return key in obj;
 }
+function titleCase(word: string) {
+  return word
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+}
+function tierWeightFromKey(skillKey: string): number {
+  if (skillKey.startsWith("apprentice_magic_")) return 0;
+  if (skillKey.startsWith("journeyman_magic_")) return 1;
+  if (skillKey.startsWith("master_magic_")) return 2;
+  if (skillKey.startsWith("gmaster_magic_")) return 3;
+  return 99;
+}
+// Derive a magic track for a given skill (within Magical Arts)
+function getMagicTrackForSkill(skillKey: string, cfg: any): MagicTrack | "other" {
+  if (MAGIC_FORCE_OTHER.has(skillKey)) return "other";
+  const m = skillKey.match(/^(?:apprentice|journeyman|master|gmaster)_magic_([a-z_]+)/);
+  if (m) {
+    const track = m[1] as string;
+    if ((MAGIC_TRACKS_ORDER as readonly string[]).includes(track)) return track as MagicTrack;
+  }
+  const tryArrays: any[] = [];
+  if (cfg?.prereqAll) tryArrays.push(cfg.prereqAll);
+  if (cfg?.prereqAny) tryArrays.push(cfg.prereqAny);
+  if (cfg?.prereqCounts) tryArrays.push(cfg.prereqCounts.map((x: any) => x.key));
+  if (cfg?.prereqAnyCounts) tryArrays.push(cfg.prereqAnyCounts.map((x: any) => x.key));
+
+  for (const arr of tryArrays) {
+    if (!Array.isArray(arr)) continue;
+    for (const p of arr) {
+      if (typeof p !== "string") continue;
+      if ((MAGIC_TRACKS_ORDER as readonly string[]).includes(p)) return p as MagicTrack;
+      const mm = p.match(/^(?:apprentice|journeyman|master|gmaster)_magic_([a-z_]+)/);
+      if (mm) {
+        const t = mm[1] as string;
+        if ((MAGIC_TRACKS_ORDER as readonly string[]).includes(t)) return t as MagicTrack;
+      }
+    }
+  }
+  return "other";
+}
 
 function ToggleChip({
   label,
   selected,
   onPress,
+  disabled,
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
+  disabled?: boolean;
 }) {
   return (
     <Pressable
-      onPress={onPress}
+      onPress={() => {
+        if (!disabled) onPress();
+      }}
+      disabled={disabled}
       style={({ pressed }) => ({
         paddingVertical: 8,
         paddingHorizontal: 12,
         borderRadius: 999,
         borderWidth: 1,
         margin: 4,
-        opacity: pressed ? 0.7 : 1,
+        opacity: disabled ? 0.35 : pressed ? 0.7 : 1,
         backgroundColor: selected ? "#ddd" : "transparent",
       })}
     >
@@ -65,7 +127,46 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-// Stepper row (for stackable entries) — cost moved to the RIGHT of the + button
+function CollapsibleBlock({
+  title,
+  rightText,
+  expanded,
+  onToggle,
+  children,
+}: {
+  title: string;
+  rightText?: string;
+  expanded: boolean;
+  onToggle: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <View style={{ marginBottom: 8 }}>
+      <Pressable
+        onPress={onToggle}
+        accessibilityRole="button"
+        style={({ pressed }) => ({
+          flexDirection: "row",
+          alignItems: "center",
+          justifyContent: "space-between",
+          paddingVertical: 10,
+          paddingHorizontal: 12,
+          borderWidth: 1,
+          borderRadius: 8,
+          backgroundColor: "#dbeafe", // light blue
+          borderColor: "#93c5fd",
+          opacity: pressed ? 0.85 : 1,
+        })}
+      >
+        <Text style={{ fontWeight: "600" }}>{expanded ? "▼" : "▶"} {title}</Text>
+        {rightText ? <Text style={{ fontSize: 12 }}>{rightText}</Text> : null}
+      </Pressable>
+      {expanded ? <View style={{ marginTop: 6 }}>{children}</View> : null}
+    </View>
+  );
+}
+
+// Stepper row (for stackable entries) — cost on the RIGHT of the + button
 function StepperRow({
   label,
   cost,
@@ -141,7 +242,7 @@ function StepperRow({
           </Pressable>
         </View>
 
-        {/* Right: cost (moved here) */}
+        {/* Right: cost */}
         <Text
           style={{
             width: 64,
@@ -220,12 +321,15 @@ export default function CreateCharacter() {
 
   // Multi-select cultures
   const [selectedCultures, setSelectedCultures] = useState<string[]>([]);
+  const [culturesOpen, setCulturesOpen] = useState(true);
 
   // Background Features (non-stacking)
   const [selectedFeatures, setSelectedFeatures] = useState<string[]>([]);
+  const [featuresOpen, setFeaturesOpen] = useState(true);
 
   // Flaws with stacks
   const [flawStacks, setFlawStacks] = useState<Record<string, number>>({});
+  const [flawsOpen, setFlawsOpen] = useState(true);
 
   // Skills with stacks
   const [skillStacks, setSkillStacks] = useState<Record<string, number>>({});
@@ -241,7 +345,7 @@ export default function CreateCharacter() {
     return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
   }, [cpInput]);
 
-  // Collapsible categories
+  // Collapsible categories (skills)
   const [expandedCats, setExpandedCats] = useState<Set<string>>(new Set());
 
   // helpers
@@ -333,6 +437,11 @@ export default function CreateCharacter() {
       }
       return curr;
     });
+
+    // Cultures: Newborn Dream cannot have cultures; clear any selection
+    if (bloodline === BLOODLINE_NEWBORN) {
+      setSelectedCultures([]);
+    }
   }, [visibleSkills, bloodline]);
 
   // ---- Subtotals
@@ -361,24 +470,28 @@ export default function CreateCharacter() {
     return sum;
   }, [selectedFeatures]);
 
-  // Flaw benefit (capped): sum ONLY negative-cost flaws, treat as positive points, cap at 10
-  const flawBenefitCapped = useMemo(() => {
+  // Flaw benefits
+  const flawRawBenefit = useMemo(() => {
     let benefit = 0;
     for (const [key, count] of Object.entries(flawStacks)) {
       if (count <= 0) continue;
       const def = hasKey(FLAWS, key) ? FLAWS[key] : undefined;
       if (!def || typeof def.cost !== "number") continue;
-      if (def.cost < 0) benefit += -def.cost * count; // convert negative cost to positive benefit
+      if (def.cost < 0) benefit += -def.cost * count;
     }
-    return Math.min(benefit, 10);
+    return benefit;
   }, [flawStacks]);
+
+  // Flaw benefit (capped at 10)
+  const flawBenefitCapped = Math.min(flawRawBenefit, 10);
 
   // Multi-culture penalty: 4 per culture beyond the first
   const extraCultures = Math.max(0, selectedCultures.length - 1);
   const multiCulturePenalty = extraCultures * 4;
 
-  // Points Left = budget - skills - features - min(flaw benefit, 10) - penalty
-  const pointsLeft = cpBudget - skillsSubtotal - featuresSubtotal - flawBenefitCapped - multiCulturePenalty;
+  // Points Left
+  const pointsLeft =
+    cpBudget - skillsSubtotal - featuresSubtotal + flawBenefitCapped - multiCulturePenalty;
 
   // Auto-expand categories with any selected skills
   useEffect(() => {
@@ -402,7 +515,8 @@ export default function CreateCharacter() {
   const getFeatureLabel = (k: string) =>
     hasKey(BACKGROUND_FEATURES, k) ? (BACKGROUND_FEATURES[k].label || k) : k;
 
-  const currentSkillCount = (k: string) => (hasKey(skillStacks, k) ? (skillStacks as any)[k] || 0 : 0);
+  const currentSkillCount = (k: string) =>
+    hasKey(skillStacks, k) ? (skillStacks as any)[k] || 0 : 0;
 
   const unmetPrereqsForSkill = (skillKey: string): string[] => {
     if (!hasKey(SKILL_CATALOG, skillKey)) return ["Unknown skill."];
@@ -640,6 +754,123 @@ export default function CreateCharacter() {
   const selectedCountInCategory = (items: { key: string }[]) =>
     items.reduce((acc, it) => acc + (getSkillCount(it.key) > 0 ? 1 : 0), 0);
 
+  // Magical Arts subgroup renderer (Mana Focus at top without header)
+  const renderMagicalArtsGrouped = (
+    items: { key: string; label: string; cost?: number; maxStacks?: number }[]
+  ) => {
+    // Pull out Mana Focus, render first without subheader
+    const mana = items.find((i) => i.key === "mana_focus");
+    const rest = items.filter((i) => i.key !== "mana_focus");
+
+    // Group remaining by track
+    const byTrack = new Map<string, typeof rest>();
+    for (const it of rest) {
+      const cfg = hasKey(SKILL_CATALOG, it.key) ? SKILL_CATALOG[it.key] : undefined;
+      const track = getMagicTrackForSkill(it.key, cfg) || "other";
+      if (!byTrack.has(track)) byTrack.set(track, []);
+      byTrack.get(track)!.push(it);
+    }
+
+    // Order tracks per MAGIC_TRACKS_ORDER; "other" last, then any remaining alphabetically
+    const trackOrder: string[] = [];
+    for (const t of MAGIC_TRACKS_ORDER) if (byTrack.has(t)) trackOrder.push(t);
+    const leftovers: string[] = [];
+    for (const t of byTrack.keys()) {
+      if (!MAGIC_TRACKS_ORDER.includes(t as MagicTrack) && t !== "other") leftovers.push(t);
+    }
+    leftovers.sort((a, b) => a.localeCompare(b, undefined, { sensitivity: "base" }));
+    if (byTrack.has("other")) leftovers.push("other");
+    const finalOrder = [...trackOrder, ...leftovers];
+
+    return (
+      <View style={{ marginTop: 6 }}>
+        {/* Mana Focus (no header) */}
+        {mana ? (
+          (() => {
+            const count = getSkillCount(mana.key);
+            const effectiveMax =
+              mana.maxStacks === undefined ? 1 : (mana.maxStacks as number);
+            return effectiveMax === 1 ? (
+              <ToggleRow
+                key={mana.key}
+                label={mana.label}
+                cost={mana.cost}
+                selected={count > 0}
+                errorText={skillErrors[mana.key]}
+                onToggle={() => toggleSingleSkill(mana.key)}
+              />
+            ) : (
+              <StepperRow
+                key={mana.key}
+                label={mana.label}
+                cost={mana.cost}
+                count={count}
+                maxStacks={effectiveMax}
+                errorText={skillErrors[mana.key]}
+                onInc={() => incrementSkill(mana.key)}
+                onDec={() => decrementSkill(mana.key)}
+              />
+            );
+          })()
+        ) : null}
+
+        {/* Tracks */}
+        {finalOrder.map((track) => {
+          const list = byTrack.get(track)!;
+          // Sort within track: tier order, then label
+          list.sort((a, b) => {
+            const wa = tierWeightFromKey(a.key);
+            const wb = tierWeightFromKey(b.key);
+            if (wa !== wb) return wa - wb;
+            return a.label.localeCompare(b.label, undefined, { sensitivity: "base" });
+          });
+          const trackTitle = track === "other" ? "Other Magical Arts" : titleCase(track);
+          return (
+            <View key={track} style={{ marginBottom: 10 }}>
+              <Text style={{ fontWeight: "600", marginBottom: 6 }}>{trackTitle}</Text>
+              {list.map(({ key, label, cost, maxStacks }) => {
+                const count = getSkillCount(key);
+                const effectiveMax = maxStacks === undefined ? 1 : (maxStacks as number);
+
+                if (effectiveMax === 1) {
+                  return (
+                    <ToggleRow
+                      key={key}
+                      label={label}
+                      cost={cost}
+                      selected={count > 0}
+                      errorText={skillErrors[key]}
+                      onToggle={() => toggleSingleSkill(key)}
+                    />
+                  );
+                }
+
+                return (
+                  <StepperRow
+                    key={key}
+                    label={label}
+                    cost={cost}
+                    count={count}
+                    maxStacks={effectiveMax}
+                    errorText={skillErrors[key]}
+                    onInc={() => incrementSkill(key)}
+                    onDec={() => decrementSkill(key)}
+                  />
+                );
+              })}
+            </View>
+          );
+        })}
+      </View>
+    );
+  };
+
+  // Flaw "selected" distinct count (for header)
+  const flawDistinctSelected = useMemo(
+    () => Object.values(flawStacks).filter((c) => c > 0).length,
+    [flawStacks]
+  );
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1 }}
@@ -707,21 +938,28 @@ export default function CreateCharacter() {
           ) : null}
           {bloodline === BLOODLINE_NEWBORN ? (
             <Text style={{ marginTop: 6, fontStyle: "italic" }}>
-              As {BLOODLINE_NEWBORN}, the flaw “{TETHERED_KEY}” is required.
+              As {BLOODLINE_NEWBORN}, the flaw “{TETHERED_KEY}” is required, and cultures are disabled.
             </Text>
           ) : null}
         </Section>
 
-        {/* Cultures (multi-select) */}
-        <Section title="Cultures">
+        {/* Cultures (multi-select, collapsible, disabled for Newborn Dream) */}
+        <CollapsibleBlock
+          title="Cultures"
+          rightText={`${selectedCultures.length}/${CULTURES.length} selected`}
+          expanded={culturesOpen}
+          onToggle={() => setCulturesOpen((v) => !v)}
+        >
           <View style={{ flexDirection: "row", flexWrap: "wrap" }}>
             {CULTURES.map((c) => {
               const isSelected = selectedCultures.includes(c);
+              const disabled = bloodline === BLOODLINE_NEWBORN;
               return (
                 <ToggleChip
                   key={c}
                   label={c}
                   selected={isSelected}
+                  disabled={disabled}
                   onPress={() =>
                     setSelectedCultures(
                       isSelected
@@ -733,20 +971,36 @@ export default function CreateCharacter() {
               );
             })}
           </View>
-          {extraCultures > 0 ? (
+          {bloodline === BLOODLINE_NEWBORN ? (
+            <Text style={{ marginTop: 6, color: "red" }}>
+              Newborn Dream characters may not select cultures.
+            </Text>
+          ) : extraCultures > 0 ? (
             <Text style={{ marginTop: 6, fontStyle: "italic" }}>
               Multi-culture penalty applied: −{multiCulturePenalty} ({extraCultures} extra)
             </Text>
           ) : null}
-        </Section>
+        </CollapsibleBlock>
 
-        {/* Background Features (non-stacking) */}
-        <Section title="Background Features">
+        {/* Background Features (non-stacking, collapsible) */}
+        <CollapsibleBlock
+          title="Background Features"
+          rightText={`${selectedFeatures.length}/${Object.keys(BACKGROUND_FEATURES).length} selected`}
+          expanded={featuresOpen}
+          onToggle={() => setFeaturesOpen((v) => !v)}
+        >
           {renderTwoColToggleList(BACKGROUND_FEATURES, selectedFeatures, setSelectedFeatures)}
-        </Section>
+        </CollapsibleBlock>
 
-        {/* Flaws (under Features, before Skills). Hide Tethered unless Newborn Dream; require min 1 if Newborn Dream */}
-        <Section title="Flaws">
+        {/* Flaws (collapsible). Hide Tethered unless Newborn Dream; require min 1 if Newborn Dream; don't show "benefits capped" unless raw benefit >= 10 */}
+        <CollapsibleBlock
+          title="Flaws"
+          rightText={`${flawDistinctSelected}/${Object.keys(FLAWS).length}${
+            flawRawBenefit >= 10 ? " • benefits capped" : ""
+          }`}
+          expanded={flawsOpen}
+          onToggle={() => setFlawsOpen((v) => !v)}
+        >
           <View>
             {Object.entries(FLAWS).map(([key, def]) => {
               if (key === TETHERED_KEY && bloodline !== BLOODLINE_NEWBORN) {
@@ -762,7 +1016,15 @@ export default function CreateCharacter() {
                     label={def.label}
                     cost={def.cost}
                     selected={count > 0}
-                    onToggle={() =>
+                    onToggle={() => {
+                      // Prevent deselecting Tethered for Newborn Dream
+                      if (
+                        bloodline === BLOODLINE_NEWBORN &&
+                        key === TETHERED_KEY &&
+                        count > 0
+                      ) {
+                        return;
+                      }
                       setFlawStacks((prev) => {
                         const curr = prev[key] || 0;
                         const next = curr > 0 ? 0 : 1;
@@ -770,8 +1032,8 @@ export default function CreateCharacter() {
                         if (next <= 0) delete copy[key];
                         else copy[key] = next;
                         return copy;
-                      })
-                    }
+                      });
+                    }}
                   />
                 );
               }
@@ -806,14 +1068,19 @@ export default function CreateCharacter() {
               );
             })}
           </View>
-        </Section>
+          <Text style={{ marginTop: 6, fontStyle: "italic" }}>
+            Negative CP from flaws is capped at −10 total benefit.
+          </Text>
+        </CollapsibleBlock>
 
-        {/* Skills (collapsible, category groups) */}
+        {/* Skills (collapsible, category groups; Magical Arts grouped by track; Mana Focus at top) */}
         <Section title="Skills">
           <View>
             {skillGroups.map(([category, items]) => {
               const expanded = expandedCats.has(category);
               const selCount = selectedCountInCategory(items);
+              const isMagical = category === "The Magical Arts";
+
               return (
                 <View key={category} style={{ marginBottom: 8 }}>
                   <Pressable
@@ -827,8 +1094,9 @@ export default function CreateCharacter() {
                       paddingHorizontal: 12,
                       borderWidth: 1,
                       borderRadius: 8,
-                      backgroundColor: "#f7f7f7",
-                      opacity: pressed ? 0.7 : 1,
+                      backgroundColor: "#dbeafe", // light blue
+                      borderColor: "#93c5fd",
+                      opacity: pressed ? 0.85 : 1,
                     })}
                   >
                     <Text style={{ fontWeight: "600" }}>
@@ -840,38 +1108,42 @@ export default function CreateCharacter() {
                   </Pressable>
 
                   {expanded ? (
-                    <View style={{ marginTop: 6 }}>
-                      {items.map(({ key, label, cost, maxStacks }) => {
-                        const count = getSkillCount(key);
-                        const effectiveMax = maxStacks === undefined ? 1 : (maxStacks as number);
+                    isMagical ? (
+                      renderMagicalArtsGrouped(items)
+                    ) : (
+                      <View style={{ marginTop: 6 }}>
+                        {items.map(({ key, label, cost, maxStacks }) => {
+                          const count = getSkillCount(key);
+                          const effectiveMax = maxStacks === undefined ? 1 : (maxStacks as number);
 
-                        if (effectiveMax === 1) {
+                          if (effectiveMax === 1) {
+                            return (
+                              <ToggleRow
+                                key={key}
+                                label={label}
+                                cost={cost}
+                                selected={count > 0}
+                                errorText={skillErrors[key]}
+                                onToggle={() => toggleSingleSkill(key)}
+                              />
+                            );
+                          }
+
                           return (
-                            <ToggleRow
+                            <StepperRow
                               key={key}
                               label={label}
                               cost={cost}
-                              selected={count > 0}
+                              count={count}
+                              maxStacks={effectiveMax}
                               errorText={skillErrors[key]}
-                              onToggle={() => toggleSingleSkill(key)}
+                              onInc={() => incrementSkill(key)}
+                              onDec={() => decrementSkill(key)}
                             />
                           );
-                        }
-
-                        return (
-                          <StepperRow
-                            key={key}
-                            label={label}
-                            cost={cost}
-                            count={count}
-                            maxStacks={effectiveMax}
-                            errorText={skillErrors[key]}
-                            onInc={() => incrementSkill(key)}
-                            onDec={() => decrementSkill(key)}
-                          />
-                        );
-                      })}
-                    </View>
+                        })}
+                      </View>
+                    )
                   ) : null}
                 </View>
               );
